@@ -1,0 +1,28 @@
+{
+    "manifest_version": 2,
+    "name": "Add to Notion",
+    "version": "1.0.0",
+    "description": "Add the current page to a Notion database.",
+    "permissions": [
+      "storage",
+      "tabs",
+      "https://api.notion.com/*"
+    ],
+    "browser_action": {
+      "default_popup": "popup.html",
+      "default_title": "Add to Notion"
+    },
+    "options_ui": {
+      "page": "options.html",
+      "open_in_tab": false
+    },
+    "background": {
+    "page": "background.html"
+    },
+    "applications": {
+      "gecko": {
+        "id": "add-to-notion@example.com"
+      }
+    }
+  }
+  

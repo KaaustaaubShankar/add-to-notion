@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Add to Notion</title>
+  <style>
+    body { font:14px system-ui; padding:.75rem; width:300px; }
+    textarea { width:100%; min-height:70px; }
+    button { margin-top:.5rem; padding:.4rem .8rem; }
+    #status { margin-top:.5rem; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h3>Add Page to Notion</h3>
+  <label>Notes:</label>
+  <textarea id="notes" placeholder="Optional note..."></textarea>
+  <button id="add">Add Current Tab</button>
+  <div id="status"></div>
+  <p><a href="#" id="open-options">⚙ Options</a></p>
+  <script src="popup.js"></script>
+</body>
+</html>
