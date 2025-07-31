@@ -1,18 +1,33 @@
 console.log("Background script loaded");
 
-async function generateMetadataWithOpenAI({ title, url, notes, apiKey }) {
-  const prompt = `
-Given the following bookmark information:
-- Title: ${title}
-- URL: ${url}
-- Notes: ${notes || "None"}
+async function captureScreenshot() {
+  return new Promise((resolve, reject) => {
+    browser.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+      if (browser.runtime.lastError) {
+        reject(browser.runtime.lastError.message);
+      } else {
+        resolve(dataUrl); // e.g. data:image/png;base64,...
+      }
+    });
+  });
+}
 
-Generate metadata in JSON format with the following fields:
+function cleanJsonResponse(text) {
+  return text.trim().replace(/^```json\s*/, '').replace(/```$/, '').trim();
+}
+
+async function generateMetadataFromScreenshot(base64Image, apiKey) {
+  const prompt = `
+Analyze this screenshot of a webpage and extract only the following metadata in JSON format:
+
 {
+  "Title": "Page title or main heading",
   "Type": "Article | Video | Blog | Research | Documentation | Other",
-  "Author/Creator": "Name of the author or website",
-  "Topics/Tags": ["tag1", "tag2", ...],
-}`;
+  "Author/Creator": "Name of the author or website"
+}
+
+Respond ONLY with valid JSON, no explanations or extra text.
+`;
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -21,21 +36,44 @@ Generate metadata in JSON format with the following fields:
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: base64Image } }
+          ]
+        }
+      ],
+      temperature: 0.5,
     })
   });
 
   const data = await response.json();
   try {
-    return JSON.parse(data.choices[0].message.content);
+    const cleaned = cleanJsonResponse(data.choices[0].message.content);
+    return JSON.parse(cleaned);
   } catch (err) {
-    console.error("Failed to parse OpenAI response:", err);
+    console.error("Failed to parse screenshot metadata:", err, data.choices[0].message.content);
     return {};
   }
 }
 
+// Minimal fallback metadata generator: just returns title/url and empty placeholders
+function generateBasicMetadata({ title, url, notes }) {
+  return {
+    Title: title || url,
+    Type: null,
+    "Author/Creator": null,
+    Status: null,
+    "Topics/Tags": [],
+    Rating: null,
+    "Date Completed": null,
+    URL: url,
+    Notes: notes || ""
+  };
+}
 
 async function addPage({ url, title, notes }) {
   const { notionSecret, notionDatabaseId, openaiApiKey } = await browser.storage.sync.get([
@@ -48,40 +86,46 @@ async function addPage({ url, title, notes }) {
 
   const now = new Date().toISOString();
 
-  const aiMetadata = await generateMetadataWithOpenAI({
-    title,
-    url,
-    notes,
-    apiKey: openaiApiKey
-  });  
+  let screenshotMetadata = {};
+  try {
+    const base64Image = await captureScreenshot();
+    screenshotMetadata = await generateMetadataFromScreenshot(base64Image, openaiApiKey);
+  } catch (err) {
+    console.warn("Screenshot metadata generation failed, falling back to basic metadata only", err);
+  }
+
+  const textMetadata = generateBasicMetadata({ title, url, notes });
+
+  // Use screenshot title if available, otherwise fallback to passed title
+  const finalTitle = screenshotMetadata.Title || textMetadata.Title;
 
   const properties = {
     Title: {
-      title: [{ text: { content: title || url } }]
+      title: [{ text: { content: finalTitle } }]
     },
-    URL: { url },
+    URL: { url: textMetadata.URL },
     "Date Added": { date: { start: now } },
-    ...(notes?.trim() && {
-      Notes: { rich_text: [{ text: { content: notes.trim() } }] }
+    ...(textMetadata.Notes?.trim() && {
+      Notes: { rich_text: [{ text: { content: textMetadata.Notes.trim() } }] }
     }),
-    ...(aiMetadata.Type && {
-      Type: { select: { name: aiMetadata.Type } }
+    ...(screenshotMetadata.Type && {
+      Type: { select: { name: screenshotMetadata.Type } }
     }),
-    ...(aiMetadata["Author/Creator"] && {
-      "Author/Creator": { rich_text: [{ text: { content: aiMetadata["Author/Creator"] } }] }
+    ...(screenshotMetadata["Author/Creator"] && {
+      "Author/Creator": { rich_text: [{ text: { content: screenshotMetadata["Author/Creator"] } }] }
     }),
-    ...(aiMetadata.Status && {
-      Status: { select: { name: aiMetadata.Status } }
+    ...(textMetadata.Status && {
+      Status: { select: { name: textMetadata.Status } }
     }),
-    ...(aiMetadata["Topics/Tags"] && {
-      "Topics/Tags": { multi_select: aiMetadata["Topics/Tags"].map(tag => ({ name: tag })) }
+    ...(textMetadata["Topics/Tags"]?.length > 0 && {
+      "Topics/Tags": { multi_select: textMetadata["Topics/Tags"].map(tag => ({ name: tag })) }
     }),
-    ...(aiMetadata.Rating && {
-      Rating: { number: aiMetadata.Rating }
+    ...(textMetadata.Rating !== null && {
+      Rating: { number: textMetadata.Rating }
     }),
-    ...(aiMetadata["Date Completed"] && {
-      "Date Completed": { date: { start: aiMetadata["Date Completed"] } }
-    })
+    ...(textMetadata["Date Completed"] && {
+      "Date Completed": { date: { start: textMetadata["Date Completed"] } }
+    }),
   };
 
   const payload = {
